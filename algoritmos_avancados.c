@@ -4,12 +4,13 @@
 
 #define MAX_NOME 50
 #define MAX_PISTA 100
+#define HASH_SIZE 101
 
 // Estrutura para representar uma sala da mansão
 typedef struct Sala
 {
     char nome[MAX_NOME];
-    char pista[MAX_PISTA]; // pista opcional associada à sala
+    char pista[MAX_PISTA]; // pista associada à sala (string vazia se não houver)
     struct Sala *esquerda;
     struct Sala *direita;
 } Sala;
@@ -21,6 +22,17 @@ typedef struct PistaNode
     struct PistaNode *esquerda;
     struct PistaNode *direita;
 } PistaNode;
+
+// Estrutura para tabela hash: cada entrada armazena pista e suspeito associado
+typedef struct HashNode
+{
+    char pista[MAX_PISTA];
+    char suspeito[MAX_NOME];
+    struct HashNode *proximo;
+} HashNode;
+
+// Tabela hash global
+HashNode *tabelaHash[HASH_SIZE] = {NULL};
 
 /**
  * criarSala() – cria dinamicamente um cômodo com ou sem pista.
@@ -104,11 +116,132 @@ void exibirPistas(PistaNode *raiz)
 }
 
 /**
- * explorarSalasComPistas() – controla a navegação entre salas e coleta de pistas.
+ * liberarPistas() – libera memória da árvore de pistas
+ */
+void liberarPistas(PistaNode *raiz)
+{
+    if (raiz == NULL)
+        return;
+    liberarPistas(raiz->esquerda);
+    liberarPistas(raiz->direita);
+    free(raiz);
+}
+
+/**
+ * liberarSalas() – libera memória da árvore de salas
+ */
+void liberarSalas(Sala *raiz)
+{
+    if (raiz == NULL)
+        return;
+    liberarSalas(raiz->esquerda);
+    liberarSalas(raiz->direita);
+    free(raiz);
+}
+
+/**
+ * hashFunction() – função hash simples para strings
+ * @param str: string para calcular hash
+ * @return índice da tabela hash
+ */
+unsigned int hashFunction(const char *str)
+{
+    unsigned int hash = 0;
+    while (*str)
+    {
+        hash = (hash * 31) + (unsigned char)(*str);
+        str++;
+    }
+    return hash % HASH_SIZE;
+}
+
+/**
+ * inserirNaHash() – insere associação pista/suspeito na tabela hash.
+ * @param pista: chave da tabela hash
+ * @param suspeito: valor associado
+ */
+void inserirNaHash(const char *pista, const char *suspeito)
+{
+    unsigned int idx = hashFunction(pista);
+    HashNode *novoNo = (HashNode *)malloc(sizeof(HashNode));
+    if (novoNo == NULL)
+    {
+        printf("Erro de alocacao de memoria.\n");
+        exit(1);
+    }
+    strncpy(novoNo->pista, pista, MAX_PISTA - 1);
+    novoNo->pista[MAX_PISTA - 1] = '\0';
+    strncpy(novoNo->suspeito, suspeito, MAX_NOME - 1);
+    novoNo->suspeito[MAX_NOME - 1] = '\0';
+    novoNo->proximo = tabelaHash[idx];
+    tabelaHash[idx] = novoNo;
+}
+
+/**
+ * encontrarSuspeito() – consulta o suspeito correspondente a uma pista.
+ * @param pista: chave para busca
+ * @return nome do suspeito ou NULL se não encontrado
+ */
+const char *encontrarSuspeito(const char *pista)
+{
+    unsigned int idx = hashFunction(pista);
+    HashNode *atual = tabelaHash[idx];
+    while (atual != NULL)
+    {
+        if (strcmp(atual->pista, pista) == 0)
+        {
+            return atual->suspeito;
+        }
+        atual = atual->proximo;
+    }
+    return NULL;
+}
+
+/**
+ * liberarHash() – libera memória da tabela hash
+ */
+void liberarHash()
+{
+    for (int i = 0; i < HASH_SIZE; i++)
+    {
+        HashNode *atual = tabelaHash[i];
+        while (atual != NULL)
+        {
+            HashNode *temp = atual;
+            atual = atual->proximo;
+            free(temp);
+        }
+        tabelaHash[i] = NULL;
+    }
+}
+
+/**
+ * contarPistasSuspeito() – conta quantas pistas coletadas apontam para um suspeito.
+ * @param raiz: raiz da árvore de pistas coletadas
+ * @param suspeito: nome do suspeito a contar
+ * @return número de pistas que apontam para o suspeito
+ */
+int contarPistasSuspeito(PistaNode *raiz, const char *suspeito)
+{
+    if (raiz == NULL)
+        return 0;
+
+    int count = 0;
+    const char *suspeitoDaPista = encontrarSuspeito(raiz->pista);
+    if (suspeitoDaPista != NULL && strcmp(suspeitoDaPista, suspeito) == 0)
+    {
+        count = 1;
+    }
+
+    return count + contarPistasSuspeito(raiz->esquerda, suspeito) + contarPistasSuspeito(raiz->direita, suspeito);
+}
+
+/**
+ * explorarSalas() – navega pela árvore e ativa o sistema de pistas.
  * @param atual: sala atual
  * @param pistas: ponteiro para a raiz da árvore de pistas coletadas
  */
-void explorarSalasComPistas(Sala *atual, PistaNode **pistas)
+void explorarSalas(Sala *atual, PistaNode **pistas)
 {
     if (atual == NULL)
     {
@@ -163,41 +296,61 @@ void explorarSalasComPistas(Sala *atual, PistaNode **pistas)
     }
     else if ((escolha == 'e' || escolha == 'E') && atual->esquerda != NULL)
     {
-        explorarSalasComPistas(atual->esquerda, pistas);
+        explorarSalas(atual->esquerda, pistas);
     }
     else if ((escolha == 'd' || escolha == 'D') && atual->direita != NULL)
     {
-        explorarSalasComPistas(atual->direita, pistas);
+        explorarSalas(atual->direita, pistas);
     }
     else
     {
         printf("Opcao invalida. Tente novamente.\n");
-        explorarSalasComPistas(atual, pistas);
+        explorarSalas(atual, pistas);
     }
 }
 
 /**
- * liberarPistas() – libera memória da árvore de pistas
+ * verificarSuspeitoFinal() – conduz à fase de julgamento final.
+ * @param pistas: árvore de pistas coletadas
  */
-void liberarPistas(PistaNode *raiz)
+void verificarSuspeitoFinal(PistaNode *pistas)
 {
-    if (raiz == NULL)
-        return;
-    liberarPistas(raiz->esquerda);
-    liberarPistas(raiz->direita);
-    free(raiz);
-}
 
-/**
- * liberarSalas() – libera memória da árvore de salas
- */
-void liberarSalas(Sala *raiz)
-{
-    if (raiz == NULL)
+    printf("\nSuspeitos disponiveis:\n");
+    printf("Sr. Verde\n");
+    printf("Sra. Rosa\n");
+    printf("Coronel Mostarda\n");
+    printf("Professor Plum\n");
+    printf("Sra. Rosa\n");
+    printf("Sr. Verde\n");
+    printf("Coronel Mostarda\n");
+    printf("\nDigite o nome do suspeito que deseja acusar: ");
+    char suspeitoAcusado[MAX_NOME];
+    if (fgets(suspeitoAcusado, sizeof(suspeitoAcusado), stdin) == NULL)
+    {
+        printf("Erro na leitura da entrada.\n");
         return;
-    liberarSalas(raiz->esquerda);
-    liberarSalas(raiz->direita);
-    free(raiz);
+    }
+    // Remove newline
+    size_t len = strlen(suspeitoAcusado);
+    if (len > 0 && suspeitoAcusado[len - 1] == '\n')
+        suspeitoAcusado[len - 1] = '\0';
+
+    int numPistas = contarPistasSuspeito(pistas, suspeitoAcusado);
+
+    printf("\nAcusacao: %s\n", suspeitoAcusado);
+    printf("Numero de pistas que apontam para este suspeito: %d\n", numPistas);
+
+    if (numPistas >= 2)
+    {
+        printf("Parabens! Ha evidencias suficientes para sustentar a acusacao.\n");
+        printf("Investigacao encerrada com sucesso.\n");
+    }
+    else
+    {
+        printf("Nao ha evidencias suficientes para sustentar a acusacao.\n");
+        printf("Investigacao encerrada sem conclusao.\n");
+    }
 }
 
 int main()
@@ -221,12 +374,22 @@ int main()
     cozinha->esquerda = escritorio;
     cozinha->direita = quarto;
 
+    // Criando a tabela hash de pistas para suspeitos
+    // Associações fixas (pista -> suspeito)
+    inserirNaHash("Pegada estranha no tapete", "Sr. Verde");
+    inserirNaHash("Vidro quebrado na janela", "Sra. Rosa");
+    inserirNaHash("Faca com manchas de sangue", "Coronel Mostarda");
+    inserirNaHash("Livro fora do lugar", "Professor Plum");
+    inserirNaHash("Pegadas na terra molhada", "Sra. Rosa");
+    inserirNaHash("Carta rasgada", "Sr. Verde");
+    inserirNaHash("Relogio parado", "Coronel Mostarda");
+
     printf("Bem vindo ao Detective Quest!\nExplore a mansao para encontrar pistas.\n");
 
     PistaNode *pistasColetadas = NULL;
 
     // Inicia exploração a partir do hall de entrada
-    explorarSalasComPistas(hallEntrada, &pistasColetadas);
+    explorarSalas(hallEntrada, &pistasColetadas);
 
     // Exibe todas as pistas coletadas em ordem alfabética
     printf("\nPistas coletadas durante a exploracao:\n");
@@ -239,9 +402,13 @@ int main()
         exibirPistas(pistasColetadas);
     }
 
+    // Fase de acusação final
+    verificarSuspeitoFinal(pistasColetadas);
+
     // Libera memória
     liberarSalas(hallEntrada);
     liberarPistas(pistasColetadas);
+    liberarHash();
 
     printf("Obrigado por jogar!\n");
     return 0;
